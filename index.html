@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grand Hospitality Nexus</title>
+<style>
+  :root { --bg:#f5f6fa; --card:#fff; --text:#1f2430; --pri:#b8860b; --line:#e3e5ec; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14161c; --card:#1e212a; --text:#eceef3; --line:#2f3340; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Arial,sans-serif; background:var(--bg); color:var(--text); }
+  header { background:var(--pri); color:#fff; padding:12px 16px; display:flex; justify-content:space-between; align-items:center; }
+  main { max-width:900px; margin:auto; padding:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; margin:10px 0; }
+  input, select, button { padding:8px; margin:3px; border-radius:6px; border:1px solid var(--line); font-size:14px; }
+  button { background:var(--pri); color:#fff; border:none; cursor:pointer; }
+  button.sec { background:#6b7280; }
+  nav button { margin-right:4px; }
+  .row { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; }
+  .tag { font-size:12px; padding:2px 8px; border-radius:10px; background:var(--line); }
+  .placed { border-left:5px solid #ef4444; } .cooking { border-left:5px solid #f59e0b; } .ready { border-left:5px solid #22c55e; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <b>Grand Hospitality Nexus</b>
+  <span id="who"></span>
+</header>
+<main>
+
+<!-- LOGIN -->
+<div id="authBox" class="card">
+  <h3>Login / Register</h3>
+  <input id="name" placeholder="Name (only for register)"><br>
+  <input id="email" placeholder="Email"><br>
+  <input id="pass" type="password" placeholder="Password"><br>
+  <button onclick="login()">Login</button>
+  <button class="sec" onclick="register()">Register</button>
+  <p><small>Staff demo: admin@ghn.com or chef@ghn.com / admin123</small></p>
+</div>
+
+<!-- APP -->
+<div id="app" class="hidden">
+  <nav id="nav"></nav>
+
+  <!-- GUEST: ROOMS -->
+  <section id="tab-rooms" class="hidden">
+    <div class="card">
+      Check-in <input type="date" id="ci"> Check-out <input type="date" id="co">
+      <button onclick="loadRooms()">Search Rooms</button>
+    </div>
+    <div id="rooms"></div>
+    <h3>My Bookings</h3>
+    <div id="myBookings"></div>
+  </section>
+
+  <!-- GUEST: FOOD -->
+  <section id="tab-food" class="hidden">
+    <div id="menu"></div>
+    <div class="card">
+      <h3>Cart</h3>
+      <div id="cart">Empty</div>
+      <select id="pay">
+        <option value="room">Charge to Room</option>
+        <option value="online">Pay Online (demo)</option>
+      </select>
+      <button onclick="placeOrder()">Place Order</button>
+    </div>
+    <h3>My Orders (live)</h3>
+    <div id="myOrders"></div>
+  </section>
+
+  <!-- CHEF -->
+  <section id="tab-kitchen" class="hidden">
+    <h3>Kitchen Display</h3>
+    <div id="kds"></div>
+    <h3>Stock</h3>
+    <div id="stock"></div>
+  </section>
+
+  <!-- ADMIN -->
+  <section id="tab-admin" class="hidden">
+    <h3>All Bookings</h3>
+    <div id="allBookings"></div>
+  </section>
+</div>
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+let token = localStorage.getItem('token');
+let role = localStorage.getItem('role');
+let uname = localStorage.getItem('uname');
+let cart = {}; // id -> {name, price, qty}
+let menuData = [];
+
+const $ = (id) => document.getElementById(id);
+const money = (n) => '₹' + n;
+const date = (d) => new Date(d).toLocaleDateString();
+
+async function api(url, method = 'GET', body) {
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || 'Error'); throw new Error(data.error); }
+  return data;
+}
+
+/* ---------- AUTH ---------- */
+async function login() { afterAuth(await api('/api/login', 'POST', { email: $('email').value, password: $('pass').value })); }
+async function register() { afterAuth(await api('/api/register', 'POST', { name: $('name').value, email: $('email').value, password: $('pass').value })); }
+function afterAuth(d) {
+  token = d.token; role = d.role; uname = d.name;
+  localStorage.setItem('token', token); localStorage.setItem('role', role); localStorage.setItem('uname', uname);
+  start();
+}
+function logout() { localStorage.clear(); location.reload(); }
+
+/* ---------- NAV ---------- */
+function start() {
+  if (!token) return;
+  $('authBox').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  $('who').innerHTML = `${uname} (${role}) <button class="sec" onclick="logout()">Logout</button>`;
+  const tabs = role === 'guest' ? [['rooms', 'Rooms'], ['food', 'Order Food']]
+             : role === 'chef' ? [['kitchen', 'Kitchen']]
+             : [['admin', 'Front Desk'], ['kitchen', 'Kitchen']];
+  $('nav').innerHTML = tabs.map(t => `<button onclick="show('${t[0]}')">${t[1]}</button>`).join('');
+  show(tabs[0][0]);
+}
+function show(t) {
+  ['rooms', 'food', 'kitchen', 'admin'].forEach(x => $('tab-' + x).classList.add('hidden'));
+  $('tab-' + t).classList.remove('hidden');
+  refresh(t);
+}
+function refresh(t) {
+  if (t === 'rooms') { loadRooms(); loadMyBookings(); }
+  if (t === 'food') { loadMenu(); loadMyOrders(); }
+  if (t === 'kitchen') { loadKDS(); loadStock(); }
+  if (t === 'admin') loadAllBookings();
+}
+
+/* ---------- ROOMS ---------- */
+async function loadRooms() {
+  const q = $('ci').value && $('co').value ? `?checkIn=${$('ci').value}&checkOut=${$('co').value}` : '';
+  const rooms = await api('/api/rooms' + q);
+  $('rooms').innerHTML = rooms.map(r => `
+    <div class="card row"><span>Room ${r.number} - ${r.type} - ${money(r.price)}/night</span>
+    <button onclick="book('${r._id}')">Book</button></div>`).join('') || 'No rooms available';
+}
+async function book(roomId) {
+  if (!$('ci').value || !$('co').value) return alert('Select dates first');
+  await api('/api/bookings', 'POST', { roomId, checkIn: $('ci').value, checkOut: $('co').value });
+  alert('Booked! Front desk will check you in.');
+  loadRooms(); loadMyBookings();
+}
+async function loadMyBookings() {
+  const b = await api('/api/bookings/my');
+  $('myBookings').innerHTML = b.map(x => `<div class="card">Room ${x.room.number} | ${date(x.checkIn)} to ${date(x.checkOut)}
+    <span class="tag">${x.status}</span> Food bill: ${money(x.folio)}</div>`).join('') || 'No bookings';
+}
+
+/* ---------- FOOD ---------- */
+async function loadMenu() {
+  menuData = await api('/api/menu');
+  $('menu').innerHTML = menuData.map(m => `
+    <div class="card row"><span>${m.veg ? '🟢' : '🔴'} ${m.name} - ${money(m.price)} <span class="tag">${m.category}</span></span>
+    ${m.inStock ? `<button onclick="addCart('${m._id}')">Add</button>` : '<span class="tag">Out of stock</span>'}</div>`).join('');
+}
+function addCart(id) {
+  const m = menuData.find(x => x._id === id);
+  cart[id] = cart[id] || { name: m.name, price: m.price, qty: 0 };
+  cart[id].qty++;
+  renderCart();
+}
+function renderCart() {
+  const ids = Object.keys(cart);
+  let total = 0;
+  $('cart').innerHTML = ids.map(id => { const c = cart[id]; total += c.price * c.qty; return `<div>${c.name} x ${c.qty}</div>`; }).join('') || 'Empty';
+  if (ids.length) $('cart').innerHTML += `<b>Total: ${money(total)}</b>`;
+}
+async function placeOrder() {
+  const items = Object.keys(cart).map(id => ({ id, qty: cart[id].qty }));
+  await api('/api/orders', 'POST', { items, payment: $('pay').value });
+  cart = {}; renderCart(); loadMyOrders();
+  alert('Order placed!');
+}
+async function loadMyOrders() {
+  const o = await api('/api/orders/my');
+  $('myOrders').innerHTML = o.map(x => `<div class="card ${x.status}">${x.items.map(i => i.name + ' x' + i.qty).join(', ')}
+    <br>${money(x.total)} (${x.payment}) <span class="tag">${x.status.toUpperCase()}</span></div>`).join('') || 'No orders yet';
+}
+
+/* ---------- KITCHEN ---------- */
+const nextStatus = { placed: 'cooking', cooking: 'ready', ready: 'delivered' };
+async function loadKDS() {
+  const o = await api('/api/orders');
+  $('kds').innerHTML = o.map(x => {
+    const mins = Math.floor((Date.now() - new Date(x.createdAt)) / 60000);
+    return `<div class="card ${x.status}"><div class="row"><b>Room ${x.roomNumber}</b><span>${mins} min ago</span></div>
+      ${x.items.map(i => i.name + ' x' + i.qty).join('<br>')}<br>
+      <span class="tag">${x.status}</span>
+      <button onclick="setStatus('${x._id}','${nextStatus[x.status]}')">Mark ${nextStatus[x.status]}</button></div>`;
+  }).join('') || 'No active orders';
+}
+async function setStatus(id, status) { await api(`/api/orders/${id}/status`, 'PATCH', { status }); }
+async function loadStock() {
+  const m = await api('/api/menu');
+  $('stock').innerHTML = m.map(i => `<div class="card row">${i.name}
+    <button class="${i.inStock ? '' : 'sec'}" onclick="toggleStock('${i._id}')">${i.inStock ? 'In stock' : 'Out of stock'}</button></div>`).join('');
+}
+async function toggleStock(id) { await api(`/api/menu/${id}/stock`, 'PATCH'); loadStock(); }
+
+/* ---------- ADMIN ---------- */
+async function loadAllBookings() {
+  const b = await api('/api/bookings');
+  $('allBookings').innerHTML = b.map(x => `<div class="card"><b>${x.user ? x.user.name : '-'}</b> | Room ${x.room.number} |
+    ${date(x.checkIn)} to ${date(x.checkOut)} <span class="tag">${x.status}</span> Food bill: ${money(x.folio)}<br>
+    ${x.status === 'booked' ? `<button onclick="act('${x._id}','checkin')">Check-in</button>` : ''}
+    ${x.status === 'checked-in' ? `<button onclick="act('${x._id}','checkout')">Check-out</button>` : ''}</div>`).join('');
+}
+async function act(id, action) { await api(`/api/bookings/${id}/${action}`, 'PATCH'); loadAllBookings(); }
+
+/* ---------- REALTIME ---------- */
+const socket = io();
+socket.on('orders:changed', () => {
+  if (!$('tab-food').classList.contains('hidden')) loadMyOrders();
+  if (!$('tab-kitchen').classList.contains('hidden')) loadKDS();
+});
+socket.on('menu:changed', () => {
+  if (!$('tab-food').classList.contains('hidden')) loadMenu();
+});
+
+start();
+</script>
+</body>
+</html>
