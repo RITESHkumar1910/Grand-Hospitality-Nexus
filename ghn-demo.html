@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Grand Hospitality Nexus</title>
+<style>
+  :root { --bg:#f5f6fa; --card:#ffffff; --text:#1f2430; --pri:#9a6f0b; --line:#e3e5ec; --mut:#6b7280;
+    box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px); }
+  html { scroll-padding-top:env(safe-area-inset-top,0px); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#14161c; --card:#1e212a; --text:#eceef3; --line:#2f3340; --mut:#9aa1b2; --pri:#c9961a; } }
+  :root[data-theme="dark"] { --bg:#14161c; --card:#1e212a; --text:#eceef3; --line:#2f3340; --mut:#9aa1b2; --pri:#c9961a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Arial,sans-serif; background:var(--bg); color:var(--text); }
+  header { background:var(--pri); color:#fff; padding:12px 16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; }
+  main { max-width:900px; margin:auto; padding:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; margin:10px 0; }
+  input, select, button { padding:9px; margin:3px; border-radius:6px; border:1px solid var(--line); font-size:14px; background:var(--card); color:var(--text); }
+  button { background:var(--pri); color:#fff; border:none; cursor:pointer; }
+  button.sec { background:#6b7280; }
+  button.sm { padding:5px 9px; font-size:12px; }
+  .row { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; }
+  .tag { font-size:12px; padding:2px 8px; border-radius:10px; background:var(--line); color:var(--text); }
+  .placed { border-left:5px solid #ef4444; } .cooking { border-left:5px solid #f59e0b; } .ready { border-left:5px solid #22c55e; }
+  .hidden { display:none; }
+  small, .mut { color:var(--mut); }
+  .note { background:var(--card); border:1px dashed var(--pri); border-radius:8px; padding:10px; margin:10px 0; font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <b>🏨 Grand Hospitality Nexus</b>
+  <span id="who"></span>
+</header>
+<main>
+
+<div id="authBox">
+  <div class="card">
+    <h3>Login / Register</h3>
+    <input id="name" placeholder="Name (only for register)"><br>
+    <input id="email" placeholder="Email"><br>
+    <input id="pass" type="password" placeholder="Password"><br>
+    <button onclick="go(login)">Login</button>
+    <button class="sec" onclick="go(register)">Register as Guest</button>
+  </div>
+  <div class="card">
+    <b>Quick demo login</b><br>
+    <button onclick="quick('admin@ghn.com')">Front Desk (Admin)</button>
+    <button onclick="quick('chef@ghn.com')">Chef (Kitchen)</button>
+    <button onclick="quick('guest@ghn.com')">Demo Guest</button>
+  </div>
+  <div class="note"><b>Demo tip:</b> Log in as Guest in one tab and as Chef in another tab. When the guest places an order, it appears on the kitchen screen instantly. Data is saved in this browser and syncs between tabs on the same device.</div>
+</div>
+
+<div id="app" class="hidden">
+  <nav id="nav"></nav>
+
+  <section id="tab-rooms" class="hidden">
+    <div class="card">
+      Check-in <input type="date" id="ci"> Check-out <input type="date" id="co">
+      <button onclick="loadRooms()">Search Rooms</button>
+    </div>
+    <div id="rooms"></div>
+    <h3>My Bookings</h3>
+    <div id="myBookings"></div>
+  </section>
+
+  <section id="tab-food" class="hidden">
+    <div id="menu"></div>
+    <div class="card">
+      <h3>Cart</h3>
+      <div id="cart">Empty</div>
+      <select id="pay">
+        <option value="room">Charge to Room</option>
+        <option value="online">Pay Online (demo)</option>
+      </select>
+      <button onclick="go(placeOrder)">Place Order</button>
+    </div>
+    <h3>My Orders (live)</h3>
+    <div id="myOrders"></div>
+  </section>
+
+  <section id="tab-kitchen" class="hidden">
+    <h3>Kitchen Display</h3>
+    <div id="kds"></div>
+    <h3>Stock</h3>
+    <div id="stock"></div>
+  </section>
+
+  <section id="tab-admin" class="hidden">
+    <h3>All Bookings</h3>
+    <div id="allBookings"></div>
+    <button class="sec sm" onclick="resetDemo()">Reset demo data</button>
+  </section>
+</div>
+</main>
+
+<script>
+/* ============ tiny in-browser "backend" ============ */
+const mem = {};
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return mem[k] || null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { mem[k] = v; } }
+};
+const sess = {
+  get(k) { try { return sessionStorage.getItem(k); } catch (e) { return mem['s_' + k] || null; } },
+  set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { mem['s_' + k] = v; } },
+  del(k) { try { sessionStorage.removeItem(k); } catch (e) { delete mem['s_' + k]; } }
+};
+const uid = () => Math.random().toString(36).slice(2, 9);
+let bc = null;
+try { bc = new BroadcastChannel('ghn'); } catch (e) {}
+
+function seedData() {
+  return {
+    users: [
+      { id: 'u1', name: 'Admin', email: 'admin@ghn.com', password: 'admin123', role: 'admin' },
+      { id: 'u2', name: 'Chef', email: 'chef@ghn.com', password: 'admin123', role: 'chef' },
+      { id: 'u3', name: 'Demo Guest', email: 'guest@ghn.com', password: 'guest123', role: 'guest' }
+    ],
+    rooms: [
+      { id: 'r1', number: '101', type: 'Standard', price: 2500 },
+      { id: 'r2', number: '102', type: 'Standard', price: 2500 },
+      { id: 'r3', number: '201', type: 'Deluxe', price: 4000 },
+      { id: 'r4', number: '202', type: 'Deluxe', price: 4000 },
+      { id: 'r5', number: '301', type: 'Suite', price: 7500 }
+    ],
+    menu: [
+      { id: 'm1', name: 'Masala Dosa', category: 'Breakfast', price: 120, veg: true, inStock: true },
+      { id: 'm2', name: 'Paneer Sandwich', category: 'Snacks', price: 150, veg: true, inStock: true },
+      { id: 'm3', name: 'Chicken Biryani', category: 'Main Course', price: 280, veg: false, inStock: true },
+      { id: 'm4', name: 'Dal Tadka + Rice', category: 'Main Course', price: 180, veg: true, inStock: true },
+      { id: 'm5', name: 'Cold Coffee', category: 'Beverages', price: 90, veg: true, inStock: true },
+      { id: 'm6', name: 'Brownie', category: 'Dessert', price: 110, veg: true, inStock: true }
+    ],
+    bookings: [], orders: []
+  };
+}
+let db;
+function load() {
+  let d = null;
+  try { d = JSON.parse(store.get('ghn_db')); } catch (e) {}
+  db = d || seedData();
+  return db;
+}
+function save() {
+  store.set('ghn_db', JSON.stringify(db));
+  try { bc && bc.postMessage('changed'); } catch (e) {}
+}
+
+let me = null; // current session user
+function restoreSession() { try { me = JSON.parse(sess.get('ghn_me')); } catch (e) { me = null; } }
+
+/* ---- "API" functions (same logic as the Express routes) ---- */
+function login() {
+  load();
+  const u = db.users.find(x => x.email === $('email').value.trim() && x.password === $('pass').value);
+  if (!u) throw new Error('Wrong email or password');
+  setMe(u);
+}
+function register() {
+  load();
+  const name = $('name').value.trim(), email = $('email').value.trim(), password = $('pass').value;
+  if (!name || !email || !password) throw new Error('All fields required');
+  if (db.users.some(x => x.email === email)) throw new Error('Email already used');
+  const u = { id: uid(), name, email, password, role: 'guest' };
+  db.users.push(u); save(); setMe(u);
+}
+function quick(email) {
+  load();
+  setMe(db.users.find(x => x.email === email));
+}
+function setMe(u) {
+  me = { id: u.id, name: u.name, role: u.role };
+  sess.set('ghn_me', JSON.stringify(me));
+  start();
+}
+function logout() { sess.del('ghn_me'); me = null; location.reload(); }
+
+function roomsFor(ci, co) {
+  load();
+  if (!ci || !co) return db.rooms;
+  const a = new Date(ci), b = new Date(co);
+  const busy = db.bookings.filter(x => x.status !== 'checked-out' && new Date(x.checkIn) < b && new Date(x.checkOut) > a).map(x => x.roomId);
+  return db.rooms.filter(r => !busy.includes(r.id));
+}
+function bookRoom(roomId) {
+  load();
+  const ci = $('ci').value, co = $('co').value;
+  if (!ci || !co) throw new Error('Select dates first');
+  const a = new Date(ci), b = new Date(co);
+  if (!(a < b)) throw new Error('Check-out must be after check-in');
+  const clash = db.bookings.some(x => x.roomId === roomId && x.status !== 'checked-out' && new Date(x.checkIn) < b && new Date(x.checkOut) > a);
+  if (clash) throw new Error('Room already booked for these dates');
+  db.bookings.push({ id: uid(), userId: me.id, roomId, checkIn: ci, checkOut: co, status: 'booked', folio: 0, createdAt: Date.now() });
+  save();
+  alert('Booked! Front desk will check you in.');
+}
+function bookingAction(id, status) {
+  load();
+  db.bookings.find(x => x.id === id).status = status;
+  save();
+}
+function toggleStock(id) {
+  load();
+  const m = db.menu.find(x => x.id === id);
+  m.inStock = !m.inStock;
+  save();
+}
+function placeOrder() {
+  load();
+  const ids = Object.keys(cart);
+  if (!ids.length) throw new Error('Cart empty');
+  const booking = db.bookings.find(x => x.userId === me.id && x.status === 'checked-in');
+  if (!booking) throw new Error('You must be checked-in to order. Ask the front desk.');
+  const room = db.rooms.find(r => r.id === booking.roomId);
+  const items = []; let total = 0;
+  for (const id of ids) {
+    const m = db.menu.find(x => x.id === id); // price always from DB
+    if (!m || !m.inStock) throw new Error((m ? m.name : 'Item') + ' not available');
+    items.push({ name: m.name, price: m.price, qty: cart[id].qty });
+    total += m.price * cart[id].qty;
+  }
+  const payment = $('pay').value;
+  db.orders.push({ id: uid(), userId: me.id, roomNumber: room.number, items, total, payment, paid: payment === 'online', status: 'placed', createdAt: Date.now() });
+  if (payment === 'room') booking.folio += total; // charge to room folio
+  save();
+  cart = {}; renderCart();
+  alert('Order placed!');
+}
+function setStatus(id, status) {
+  load();
+  db.orders.find(x => x.id === id).status = status;
+  save();
+}
+function resetDemo() {
+  if (!confirm('Reset all demo data?')) return;
+  db = seedData(); save(); refreshAll();
+}
+
+/* ============ UI ============ */
+const $ = (id) => document.getElementById(id);
+const money = (n) => '₹' + n;
+const fdate = (d) => new Date(d).toLocaleDateString();
+let cart = {};
+
+function go(fn) { try { fn(); refreshAll(); } catch (e) { alert(e.message); } }
+function act(fn, ...a) { go(() => fn(...a)); }
+
+function start() {
+  if (!me) return;
+  $('authBox').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  $('who').innerHTML = me.name + ' (' + me.role + ') <button class="sec sm" onclick="logout()">Logout</button>';
+  const tabs = me.role === 'guest' ? [['rooms', 'Rooms'], ['food', 'Order Food']]
+    : me.role === 'chef' ? [['kitchen', 'Kitchen']]
+    : [['admin', 'Front Desk'], ['kitchen', 'Kitchen']];
+  $('nav').innerHTML = tabs.map(t => '<button onclick="show(\'' + t[0] + '\')">' + t[1] + '</button>').join('');
+  show(tabs[0][0]);
+}
+let currentTab = null;
+function show(t) {
+  currentTab = t;
+  ['rooms', 'food', 'kitchen', 'admin'].forEach(x => $('tab-' + x).classList.add('hidden'));
+  $('tab-' + t).classList.remove('hidden');
+  refreshAll();
+}
+function refreshAll() {
+  if (!me || !currentTab) return;
+  load();
+  if (currentTab === 'rooms') { loadRooms(); loadMyBookings(); }
+  if (currentTab === 'food') { loadMenu(); loadMyOrders(); }
+  if (currentTab === 'kitchen') { loadKDS(); loadStock(); }
+  if (currentTab === 'admin') loadAllBookings();
+}
+
+function loadRooms() {
+  const rooms = roomsFor($('ci').value, $('co').value);
+  $('rooms').innerHTML = rooms.map(r => '<div class="card row"><span>Room ' + r.number + ' - ' + r.type + ' - ' + money(r.price) + '/night</span>' +
+    '<button onclick="act(bookRoom,\'' + r.id + '\')">Book</button></div>').join('') || '<div class="card">No rooms available for these dates</div>';
+}
+function loadMyBookings() {
+  const b = db.bookings.filter(x => x.userId === me.id).reverse();
+  $('myBookings').innerHTML = b.map(x => {
+    const r = db.rooms.find(y => y.id === x.roomId);
+    return '<div class="card">Room ' + r.number + ' | ' + fdate(x.checkIn) + ' to ' + fdate(x.checkOut) +
+      ' <span class="tag">' + x.status + '</span> Food bill: ' + money(x.folio) + '</div>';
+  }).join('') || '<small>No bookings yet</small>';
+}
+
+function loadMenu() {
+  $('menu').innerHTML = db.menu.map(m => '<div class="card row"><span>' + (m.veg ? '🟢' : '🔴') + ' ' + m.name + ' - ' + money(m.price) +
+    ' <span class="tag">' + m.category + '</span></span>' +
+    (m.inStock ? '<button onclick="addCart(\'' + m.id + '\')">Add</button>' : '<span class="tag">Out of stock</span>') + '</div>').join('');
+}
+function addCart(id) {
+  const m = db.menu.find(x => x.id === id);
+  cart[id] = cart[id] || { name: m.name, price: m.price, qty: 0 };
+  cart[id].qty++;
+  renderCart();
+}
+function renderCart() {
+  const ids = Object.keys(cart); let total = 0;
+  let h = ids.map(id => { const c = cart[id]; total += c.price * c.qty; return '<div>' + c.name + ' x ' + c.qty + '</div>'; }).join('') || 'Empty';
+  if (ids.length) h += '<b>Total: ' + money(total) + '</b>';
+  $('cart').innerHTML = h;
+}
+function loadMyOrders() {
+  const o = db.orders.filter(x => x.userId === me.id).reverse();
+  $('myOrders').innerHTML = o.map(x => '<div class="card ' + x.status + '">' + x.items.map(i => i.name + ' x' + i.qty).join(', ') +
+    '<br>' + money(x.total) + ' (' + x.payment + ') <span class="tag">' + x.status.toUpperCase() + '</span></div>').join('') || '<small>No orders yet</small>';
+}
+
+const nextStatus = { placed: 'cooking', cooking: 'ready', ready: 'delivered' };
+function loadKDS() {
+  const o = db.orders.filter(x => x.status !== 'delivered');
+  $('kds').innerHTML = o.map(x => {
+    const mins = Math.floor((Date.now() - x.createdAt) / 60000);
+    return '<div class="card ' + x.status + '"><div class="row"><b>Room ' + x.roomNumber + '</b><span class="mut">' + mins + ' min ago</span></div>' +
+      x.items.map(i => i.name + ' x' + i.qty).join('<br>') + '<br><span class="tag">' + x.status + '</span> ' +
+      '<button onclick="act(setStatus,\'' + x.id + '\',\'' + nextStatus[x.status] + '\')">Mark ' + nextStatus[x.status] + '</button></div>';
+  }).join('') || '<div class="card">No active orders</div>';
+}
+function loadStock() {
+  $('stock').innerHTML = db.menu.map(i => '<div class="card row">' + i.name +
+    '<button class="' + (i.inStock ? '' : 'sec') + '" onclick="act(toggleStock,\'' + i.id + '\')">' + (i.inStock ? 'In stock' : 'Out of stock') + '</button></div>').join('');
+}
+
+function loadAllBookings() {
+  const b = db.bookings.slice().reverse();
+  $('allBookings').innerHTML = b.map(x => {
+    const r = db.rooms.find(y => y.id === x.roomId), u = db.users.find(y => y.id === x.userId);
+    return '<div class="card"><b>' + (u ? u.name : '-') + '</b> | Room ' + r.number + ' | ' + fdate(x.checkIn) + ' to ' + fdate(x.checkOut) +
+      ' <span class="tag">' + x.status + '</span> Food bill: ' + money(x.folio) + '<br>' +
+      (x.status === 'booked' ? '<button onclick="act(bookingAction,\'' + x.id + '\',\'checked-in\')">Check-in</button>' : '') +
+      (x.status === 'checked-in' ? '<button onclick="act(bookingAction,\'' + x.id + '\',\'checked-out\')">Check-out</button>' : '') + '</div>';
+  }).join('') || '<div class="card">No bookings yet</div>';
+}
+
+/* ============ realtime (cross-tab) ============ */
+try { bc && (bc.onmessage = () => refreshAll()); } catch (e) {}
+window.addEventListener('storage', (e) => { if (e.key === 'ghn_db') refreshAll(); });
+setInterval(() => { if (currentTab === 'kitchen') refreshAll(); }, 30000); // update "min ago"
+
+restoreSession();
+start();
+</script>
+</body>
+</html>
